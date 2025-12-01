@@ -936,7 +936,12 @@
                     brick.hits--;
                     if (brick.hits <= 0) {
                         brick.visible = false;
-                        score += 10 * brick.maxHits;
+                        // 점수 계산: 기본 점수 * 벽돌 내구도
+                        const pointsEarned = 10 * brick.maxHits;
+                        score += pointsEarned;
+                        // 점수를 숫자로 확실히 변환
+                        score = parseInt(score, 10);
+                        console.log(`벽돌 파괴! +${pointsEarned}점 (총 점수: ${score})`);
                         playSound(500, 0.2, 'square');
                         
                         // 파워업 생성 (20% 확률)
@@ -1008,7 +1013,10 @@
                 playSound(200, 0.5, 'sine');
             }
             
+            // 점수를 숫자로 확실히 변환
+            score = parseInt(score, 10) || 0;
             finalScoreSpan.textContent = score;
+            console.log('게임 종료 - 최종 점수:', score);
             gameOverDiv.style.display = 'block';
             
             // Firebase에 점수 저장
@@ -1022,18 +1030,44 @@
                 return;
             }
 
+            // 점수가 0이면 저장하지 않음
+            if (score <= 0) {
+                console.log('점수가 0이므로 저장하지 않습니다.');
+                return;
+            }
+
             try {
+                // 점수를 숫자로 확실히 변환
+                const finalScore = parseInt(score, 10);
+                
+                if (isNaN(finalScore) || finalScore <= 0) {
+                    console.error('유효하지 않은 점수:', score);
+                    return;
+                }
+
                 const scoreData = {
-                    name: playerName,
-                    score: score,
-                    difficulty: difficulty,
-                    timestamp: firebase.database.ServerValue.TIMESTAMP
+                    name: playerName || '익명',
+                    score: finalScore,  // 숫자 타입으로 저장
+                    difficulty: difficulty || 'easy',
+                    timestamp: firebase.database.ServerValue.TIMESTAMP,
+                    date: new Date().toISOString()  // 디버깅용 날짜
                 };
                 
-                database.ref('scores').push(scoreData);
-                loadLeaderboard();
+                console.log('점수 저장 시도:', scoreData);
+                
+                database.ref('scores').push(scoreData, (error) => {
+                    if (error) {
+                        console.error('점수 저장 실패:', error);
+                    } else {
+                        console.log('✅ 점수 저장 성공:', finalScore, '점');
+                        // 저장 후 순위표 새로고침
+                        setTimeout(() => {
+                            loadLeaderboard();
+                        }, 500);
+                    }
+                });
             } catch (e) {
-                console.error('점수 저장 실패:', e);
+                console.error('점수 저장 중 오류:', e);
             }
         }
 
@@ -1086,13 +1120,27 @@
                     .once('value', (snapshot) => {
                         const scores = [];
                         snapshot.forEach((child) => {
-                            scores.push(child.val());
+                            const data = child.val();
+                            // 점수를 숫자로 변환하여 저장
+                            if (data && typeof data.score !== 'undefined') {
+                                scores.push({
+                                    ...data,
+                                    score: parseInt(data.score, 10) || 0
+                                });
+                            }
                         });
                         
-                        // 점수 내림차순 정렬
-                        scores.sort((a, b) => b.score - a.score);
+                        // 점수 내림차순 정렬 (같은 점수면 최신순)
+                        scores.sort((a, b) => {
+                            if (b.score !== a.score) {
+                                return b.score - a.score;  // 점수 내림차순
+                            }
+                            // 같은 점수면 타임스탬프 내림차순 (최신순)
+                            return (b.timestamp || 0) - (a.timestamp || 0);
+                        });
                         
-                        displayLeaderboard(scores);
+                        // 상위 10개만 표시
+                        displayLeaderboard(scores.slice(0, 10));
                     }, (error) => {
                         console.error('순위표 로드 오류:', error);
                         let errorDetail = 'Firebase 규칙을 확인하세요';
@@ -1287,10 +1335,27 @@
                     .on('value', (snapshot) => {
                         const scores = [];
                         snapshot.forEach((child) => {
-                            scores.push(child.val());
+                            const data = child.val();
+                            // 점수를 숫자로 변환하여 저장
+                            if (data && typeof data.score !== 'undefined') {
+                                scores.push({
+                                    ...data,
+                                    score: parseInt(data.score, 10) || 0
+                                });
+                            }
                         });
-                        scores.sort((a, b) => b.score - a.score);
-                        displayLeaderboard(scores);
+                        
+                        // 점수 내림차순 정렬 (같은 점수면 최신순)
+                        scores.sort((a, b) => {
+                            if (b.score !== a.score) {
+                                return b.score - a.score;  // 점수 내림차순
+                            }
+                            // 같은 점수면 타임스탬프 내림차순 (최신순)
+                            return (b.timestamp || 0) - (a.timestamp || 0);
+                        });
+                        
+                        // 상위 10개만 표시
+                        displayLeaderboard(scores.slice(0, 10));
                     }, (error) => {
                         console.error('실시간 순위표 업데이트 실패:', error);
                     });
