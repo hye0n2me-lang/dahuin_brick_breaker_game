@@ -427,9 +427,9 @@
         </div>
     </div>
 
-    <!-- Firebase SDK v8 (CDN 호환 버전) -->
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+    <!-- Firebase SDK v7 (안정적인 CDN 버전) - 캐시 방지 -->
+    <script src="https://www.gstatic.com/firebasejs/7.24.0/firebase-app.js?v=1"></script>
+    <script src="https://www.gstatic.com/firebasejs/7.24.0/firebase-database.js?v=1"></script>
 
     <script>
         // Firebase 설정
@@ -449,30 +449,29 @@
         let firebaseError = null;
         let firebaseInitialized = false;
 
+        // Firebase 초기화 함수
         function initializeFirebase() {
             try {
+                // Firebase SDK 확인
                 if (typeof firebase === 'undefined') {
                     firebaseError = 'Firebase SDK가 로드되지 않았습니다.';
                     console.error(firebaseError);
                     return false;
                 }
 
-                // 이미 초기화된 앱이 있는지 확인
-                try {
-                    firebase.app();
-                    console.log('Firebase 앱이 이미 초기화되어 있습니다.');
-                } catch (e) {
-                    // 앱이 없으면 초기화
+                // Firebase 앱 초기화 (중복 초기화 방지)
+                if (!firebase.apps || firebase.apps.length === 0) {
                     firebase.initializeApp(firebaseConfig);
-                    console.log('Firebase 초기화 성공');
+                    console.log('✅ Firebase 초기화 성공');
+                } else {
+                    console.log('✅ Firebase 앱이 이미 초기화되어 있습니다.');
                 }
 
+                // 데이터베이스 참조 가져오기
                 database = firebase.database();
                 
-                // 연결 테스트
-                testFirebaseConnection();
-                
                 firebaseInitialized = true;
+                console.log('✅ Firebase Database 준비 완료');
                 
                 // 실시간 순위표 설정
                 setupRealtimeLeaderboard();
@@ -480,58 +479,35 @@
                 return true;
             } catch (e) {
                 firebaseError = e.message || 'Firebase 초기화 실패';
-                console.error('Firebase 초기화 실패:', e);
+                console.error('❌ Firebase 초기화 실패:', e);
                 return false;
             }
         }
 
-        // Firebase 연결 테스트
-        function testFirebaseConnection() {
-            if (!database) return;
-            
-            try {
-                // 간단한 연결 테스트 (읽기 권한 확인)
-                database.ref('.info/connected').once('value', (snapshot) => {
-                    const connected = snapshot.val();
-                    console.log('Firebase 연결 상태:', connected ? '연결됨' : '연결 안됨');
-                    
-                    if (!connected) {
-                        // 연결이 안되면 데이터베이스 URL 확인
-                        console.warn('데이터베이스 URL 확인:', firebaseConfig.databaseURL);
-                    }
-                }).catch((error) => {
-                    console.error('Firebase 연결 테스트 실패:', error);
-                    firebaseError = `연결 오류: ${error.message}`;
-                });
-            } catch (e) {
-                console.error('연결 테스트 중 오류:', e);
-            }
-        }
-
-        // 페이지 로드 후 Firebase 초기화
-        window.addEventListener('DOMContentLoaded', () => {
-            // Firebase SDK가 로드될 때까지 대기
+        // 스크립트 로드 완료 후 Firebase 초기화
+        function initFirebaseAfterLoad() {
             if (typeof firebase !== 'undefined') {
                 initializeFirebase();
             } else {
-                // SDK 로드를 기다림
-                const checkFirebase = setInterval(() => {
-                    if (typeof firebase !== 'undefined') {
-                        clearInterval(checkFirebase);
-                        initializeFirebase();
-                    }
-                }, 100);
-                
-                // 5초 후 타임아웃
+                // SDK가 아직 로드되지 않았으면 잠시 후 재시도
                 setTimeout(() => {
-                    clearInterval(checkFirebase);
-                    if (!firebaseInitialized) {
-                        firebaseError = 'Firebase SDK 로드 타임아웃';
-                        console.error(firebaseError);
+                    if (typeof firebase !== 'undefined') {
+                        initializeFirebase();
+                    } else {
+                        firebaseError = 'Firebase SDK를 로드할 수 없습니다. 인터넷 연결을 확인하세요.';
+                        console.error('❌', firebaseError);
                     }
-                }, 5000);
+                }, 500);
             }
-        });
+        }
+
+        // 페이지 로드 완료 후 초기화
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initFirebaseAfterLoad);
+        } else {
+            // 이미 로드된 경우 즉시 실행
+            initFirebaseAfterLoad();
+        }
 
         // 게임 변수
         let canvas, ctx;
@@ -1323,14 +1299,6 @@
             }
         }
 
-        // Firebase 초기화 후 실시간 순위표 설정
-        window.addEventListener('DOMContentLoaded', () => {
-            setTimeout(() => {
-                if (firebaseInitialized && database) {
-                    setupRealtimeLeaderboard();
-                }
-            }, 1000);
-        });
 
         // Enter 키로 로그인
         document.getElementById('playerName').addEventListener('keypress', (e) => {
