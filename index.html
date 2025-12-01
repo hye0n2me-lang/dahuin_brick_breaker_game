@@ -446,11 +446,19 @@
 
         // Firebase 초기화
         let database;
+        let firebaseError = null;
         try {
-            firebase.initializeApp(firebaseConfig);
-            database = firebase.database();
+            if (typeof firebase !== 'undefined') {
+                firebase.initializeApp(firebaseConfig);
+                database = firebase.database();
+                console.log('Firebase 초기화 성공');
+            } else {
+                firebaseError = 'Firebase SDK가 로드되지 않았습니다.';
+                console.error(firebaseError);
+            }
         } catch (e) {
-            console.warn('Firebase 초기화 실패:', e);
+            firebaseError = e.message || 'Firebase 초기화 실패';
+            console.error('Firebase 초기화 실패:', e);
         }
 
         // 게임 변수
@@ -972,9 +980,23 @@
 
         // 순위표 로드
         function loadLeaderboard() {
+            const listElement = document.getElementById('leaderboardList');
+            
             if (!database) {
-                document.getElementById('leaderboardList').innerHTML = 
-                    '<li class="leaderboard-item"><span class="rank-name">Firebase 설정 필요</span></li>';
+                let errorMsg = 'Firebase 설정 필요';
+                if (firebaseError) {
+                    errorMsg = 'Firebase 연결 실패';
+                }
+                listElement.innerHTML = `
+                    <li class="leaderboard-item">
+                        <span class="rank-name" style="text-align: center; width: 100%;">
+                            ${errorMsg}<br>
+                            <small style="font-size: 0.8em; color: #666; margin-top: 5px; display: block;">
+                                Firebase Console에서 Realtime Database를 확인하세요
+                            </small>
+                        </span>
+                    </li>
+                `;
                 return;
             }
 
@@ -992,9 +1014,28 @@
                         scores.sort((a, b) => b.score - a.score);
                         
                         displayLeaderboard(scores);
+                    }, (error) => {
+                        console.error('순위표 로드 오류:', error);
+                        listElement.innerHTML = `
+                            <li class="leaderboard-item">
+                                <span class="rank-name" style="text-align: center; width: 100%;">
+                                    데이터베이스 접근 오류<br>
+                                    <small style="font-size: 0.8em; color: #666; margin-top: 5px; display: block;">
+                                        Firebase 규칙을 확인하세요
+                                    </small>
+                                </span>
+                            </li>
+                        `;
                     });
             } catch (e) {
                 console.error('순위표 로드 실패:', e);
+                listElement.innerHTML = `
+                    <li class="leaderboard-item">
+                        <span class="rank-name" style="text-align: center; width: 100%;">
+                            오류 발생: ${e.message}
+                        </span>
+                    </li>
+                `;
             }
         }
 
