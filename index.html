@@ -447,19 +447,91 @@
         // Firebase 초기화
         let database;
         let firebaseError = null;
-        try {
-            if (typeof firebase !== 'undefined') {
-                firebase.initializeApp(firebaseConfig);
+        let firebaseInitialized = false;
+
+        function initializeFirebase() {
+            try {
+                if (typeof firebase === 'undefined') {
+                    firebaseError = 'Firebase SDK가 로드되지 않았습니다.';
+                    console.error(firebaseError);
+                    return false;
+                }
+
+                // 이미 초기화된 앱이 있는지 확인
+                try {
+                    firebase.app();
+                    console.log('Firebase 앱이 이미 초기화되어 있습니다.');
+                } catch (e) {
+                    // 앱이 없으면 초기화
+                    firebase.initializeApp(firebaseConfig);
+                    console.log('Firebase 초기화 성공');
+                }
+
                 database = firebase.database();
-                console.log('Firebase 초기화 성공');
-            } else {
-                firebaseError = 'Firebase SDK가 로드되지 않았습니다.';
-                console.error(firebaseError);
+                
+                // 연결 테스트
+                testFirebaseConnection();
+                
+                firebaseInitialized = true;
+                
+                // 실시간 순위표 설정
+                setupRealtimeLeaderboard();
+                
+                return true;
+            } catch (e) {
+                firebaseError = e.message || 'Firebase 초기화 실패';
+                console.error('Firebase 초기화 실패:', e);
+                return false;
             }
-        } catch (e) {
-            firebaseError = e.message || 'Firebase 초기화 실패';
-            console.error('Firebase 초기화 실패:', e);
         }
+
+        // Firebase 연결 테스트
+        function testFirebaseConnection() {
+            if (!database) return;
+            
+            try {
+                // 간단한 연결 테스트 (읽기 권한 확인)
+                database.ref('.info/connected').once('value', (snapshot) => {
+                    const connected = snapshot.val();
+                    console.log('Firebase 연결 상태:', connected ? '연결됨' : '연결 안됨');
+                    
+                    if (!connected) {
+                        // 연결이 안되면 데이터베이스 URL 확인
+                        console.warn('데이터베이스 URL 확인:', firebaseConfig.databaseURL);
+                    }
+                }).catch((error) => {
+                    console.error('Firebase 연결 테스트 실패:', error);
+                    firebaseError = `연결 오류: ${error.message}`;
+                });
+            } catch (e) {
+                console.error('연결 테스트 중 오류:', e);
+            }
+        }
+
+        // 페이지 로드 후 Firebase 초기화
+        window.addEventListener('DOMContentLoaded', () => {
+            // Firebase SDK가 로드될 때까지 대기
+            if (typeof firebase !== 'undefined') {
+                initializeFirebase();
+            } else {
+                // SDK 로드를 기다림
+                const checkFirebase = setInterval(() => {
+                    if (typeof firebase !== 'undefined') {
+                        clearInterval(checkFirebase);
+                        initializeFirebase();
+                    }
+                }, 100);
+                
+                // 5초 후 타임아웃
+                setTimeout(() => {
+                    clearInterval(checkFirebase);
+                    if (!firebaseInitialized) {
+                        firebaseError = 'Firebase SDK 로드 타임아웃';
+                        console.error(firebaseError);
+                    }
+                }, 5000);
+            }
+        });
 
         // 게임 변수
         let canvas, ctx;
@@ -652,8 +724,19 @@
             document.addEventListener('keydown', handleKeyDown);
             document.addEventListener('keyup', handleKeyUp);
             
-            // 순위표 로드
-            loadLeaderboard();
+            // 순위표 로드 (Firebase가 준비될 때까지 대기)
+            if (firebaseInitialized && database) {
+                loadLeaderboard();
+            } else {
+                // Firebase가 아직 준비되지 않았으면 잠시 후 다시 시도
+                setTimeout(() => {
+                    if (firebaseInitialized && database) {
+                        loadLeaderboard();
+                    } else {
+                        loadLeaderboard(); // 오류 메시지 표시
+                    }
+                }, 500);
+            }
             
             // 게임 루프 시작
             gameLoop();
@@ -982,23 +1065,43 @@
         function loadLeaderboard() {
             const listElement = document.getElementById('leaderboardList');
             
-            if (!database) {
+            if (!database || !firebaseInitialized) {
                 let errorMsg = 'Firebase 설정 필요';
+                let detailMsg = 'Firebase Console에서 Realtime Database를 확인하세요';
+                
                 if (firebaseError) {
                     errorMsg = 'Firebase 연결 실패';
+                    if (firebaseError.includes('SDK')) {
+                        detailMsg = '인터넷 연결을 확인하거나 페이지를 새로고침하세요';
+                    } else if (firebaseError.includes('연결')) {
+                        detailMsg = '데이터베이스 URL과 규칙을 확인하세요';
+                    }
                 }
+                
                 listElement.innerHTML = `
                     <li class="leaderboard-item">
                         <span class="rank-name" style="text-align: center; width: 100%;">
                             ${errorMsg}<br>
                             <small style="font-size: 0.8em; color: #666; margin-top: 5px; display: block;">
-                                Firebase Console에서 Realtime Database를 확인하세요
+                                ${detailMsg}
+                            </small>
+                            <small style="font-size: 0.7em; color: #999; margin-top: 3px; display: block;">
+                                F12 → Console에서 자세한 오류 확인
                             </small>
                         </span>
                     </li>
                 `;
                 return;
             }
+
+            // 로딩 표시
+            listElement.innerHTML = `
+                <li class="leaderboard-item">
+                    <span class="rank-name" style="text-align: center; width: 100%;">
+                        로딩 중...
+                    </span>
+                </li>
+            `;
 
             try {
                 database.ref('scores')
@@ -1016,12 +1119,23 @@
                         displayLeaderboard(scores);
                     }, (error) => {
                         console.error('순위표 로드 오류:', error);
+                        let errorDetail = 'Firebase 규칙을 확인하세요';
+                        
+                        if (error.code === 'PERMISSION_DENIED') {
+                            errorDetail = '데이터베이스 읽기 권한이 없습니다. Rules 탭에서 .read: true 확인';
+                        } else if (error.code === 'UNAVAILABLE') {
+                            errorDetail = '데이터베이스에 연결할 수 없습니다. URL을 확인하세요';
+                        }
+                        
                         listElement.innerHTML = `
                             <li class="leaderboard-item">
                                 <span class="rank-name" style="text-align: center; width: 100%;">
                                     데이터베이스 접근 오류<br>
                                     <small style="font-size: 0.8em; color: #666; margin-top: 5px; display: block;">
-                                        Firebase 규칙을 확인하세요
+                                        ${errorDetail}
+                                    </small>
+                                    <small style="font-size: 0.7em; color: #999; margin-top: 3px; display: block;">
+                                        오류 코드: ${error.code || '알 수 없음'}
                                     </small>
                                 </span>
                             </li>
@@ -1032,7 +1146,10 @@
                 listElement.innerHTML = `
                     <li class="leaderboard-item">
                         <span class="rank-name" style="text-align: center; width: 100%;">
-                            오류 발생: ${e.message}
+                            오류 발생: ${e.message || '알 수 없는 오류'}<br>
+                            <small style="font-size: 0.8em; color: #666; margin-top: 5px; display: block;">
+                                브라우저 콘솔(F12)에서 자세한 정보 확인
+                            </small>
                         </span>
                     </li>
                 `;
@@ -1180,8 +1297,13 @@
             requestAnimationFrame(gameLoop);
         }
 
-        // 실시간 순위표 업데이트
-        if (database) {
+        // 실시간 순위표 업데이트 설정
+        function setupRealtimeLeaderboard() {
+            if (!database || !firebaseInitialized) {
+                console.warn('Firebase가 초기화되지 않아 실시간 순위표를 설정할 수 없습니다.');
+                return;
+            }
+
             try {
                 database.ref('scores')
                     .orderByChild('score')
@@ -1193,11 +1315,22 @@
                         });
                         scores.sort((a, b) => b.score - a.score);
                         displayLeaderboard(scores);
+                    }, (error) => {
+                        console.error('실시간 순위표 업데이트 실패:', error);
                     });
             } catch (e) {
-                console.error('실시간 순위표 업데이트 실패:', e);
+                console.error('실시간 순위표 설정 실패:', e);
             }
         }
+
+        // Firebase 초기화 후 실시간 순위표 설정
+        window.addEventListener('DOMContentLoaded', () => {
+            setTimeout(() => {
+                if (firebaseInitialized && database) {
+                    setupRealtimeLeaderboard();
+                }
+            }, 1000);
+        });
 
         // Enter 키로 로그인
         document.getElementById('playerName').addEventListener('keypress', (e) => {
